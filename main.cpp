@@ -34,8 +34,8 @@ double prevTime = 0;
 bool saveToImage = true;
 int renderCount = 1;
 int maxRenderCount = 200;
-int numParticles = 300;
-int k = numParticles;
+int numParticles = 5000;
+int k = 1000;
 
 void saveImage(int renderCount, bool saveAnimation)
 {
@@ -54,7 +54,7 @@ void saveImage(int renderCount, bool saveAnimation)
   if (saveAnimation)
     {
       glfwSetWindowShouldClose(window, true);
-      std::system("ffmpeg -y -i 'img/%05d.bmp' -r 60 animation.mp4");
+      std::system("ffmpeg -f image2 -i 'img/%05d.bmp' animation.gif");
     }
 }
 
