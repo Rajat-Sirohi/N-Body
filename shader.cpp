@@ -27,8 +27,29 @@ Shader::Shader(const char* vertexPath, const char* fragmentPath)
     glDeleteShader(fragmentShader);
 }
 
+Shader::Shader(const char* transformPath, const char* varyings[], const int numVaryings)
+{
+    std::string source = readShaderSource(transformPath);
+    const char* transformSource = source.c_str();
+    unsigned int transformShader = glCreateShader(GL_VERTEX_SHADER);
+    
+    glShaderSource(transformShader, 1, &transformSource, NULL);
+    glCompileShader(transformShader);
+    checkCompileErrors(transformShader, "VERTEX");
+    
+    ID = glCreateProgram();
+    glAttachShader(ID, transformShader);
+
+    glTransformFeedbackVaryings(ID, numVaryings, varyings, GL_INTERLEAVED_ATTRIBS);
+
+    glLinkProgram(ID);
+    checkCompileErrors(ID, "PROGRAM");
+    
+    glDeleteShader(transformShader);
+}
+
 void Shader::use() 
-{ 
+{
     glUseProgram(ID); 
 }
 

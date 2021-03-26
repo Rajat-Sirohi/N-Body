@@ -7,8 +7,6 @@
 
 #include "shader.h"
 #include "camera.h"
-#include "particle.h"
-#include "universe.h"
 
 #include <iostream>
 #include <cmath>
@@ -17,9 +15,9 @@
 #include <FreeImage.h>
 
 GLFWwindow* window;
-GLuint VAO, VBO;
+GLuint VAO[2], VBO[2];
 Shader shaderProgram = Shader();
-Universe universe = Universe();
+Shader transformShaderProgram = Shader();
 
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 800;
@@ -33,8 +31,9 @@ double prevTime = 0;
 
 bool saveToImage = false;
 int renderCount = 1;
-int maxRenderCount = 10;
-int numParticles = 200;
+int maxRenderCount = 100;
+int numParticles = 2;
+double G = 1;
 
 void saveImage(int renderCount, bool saveAnimation)
 {
@@ -103,8 +102,9 @@ void init()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_RESIZABLE, false);
     
-    window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "NBody", NULL, NULL);
+    window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "N-Body", NULL, NULL);
     glfwMakeContextCurrent(window);
     
     // glfwSetCursorPosCallback(window, mouse_callback);
@@ -116,59 +116,87 @@ void init()
         return;
     }
     
-    shaderProgram = Shader("shaders/shader.vs", "shaders/shader.fs");
+    shaderProgram = Shader("shaders/render.vs", "shaders/render.fs");
+    const char *varyings[] = {"outPos", "outVel"};
+    transformShaderProgram = Shader("shaders/transform.vs", varyings, 2);
 }
 
-void genData()
+std::vector<glm::vec3> genData()
 {
-    //universe.G = 5e1;
-    double radius = 1.0;
-    for (int i=0; i<numParticles; i++) {
-        double rands[2];
-        for (int j=0; j<2; j++) {
-            rands[j] = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-        }
-        double phi = rands[0] * M_PI;
-        double theta = rands[1] * M_PI * 2;
-        double m = 1;
-        Eigen::Vector3d r = { radius * std::sin(phi) * std::cos(theta),
-            radius * std::sin(phi) * std::sin(theta),
-            radius * std::cos(phi) };
-        Eigen::Vector3d v = {0,0,0};
-        Particle p = Particle(m, r, v);
-        universe.addParticle(p);
-    }
+    std::vector<glm::vec3> vertices(2*numParticles);
+    vertices[0] = glm::vec3(1,0,0);
+    vertices[1] = glm::vec3(-0.5,0,0);
+    vertices[2] = -vertices[0];
+    vertices[3] = -vertices[1];
+
+    // double radius = 1.0;
+    // for (int i=0; i<numParticles; i++) {
+    //     double rands[2];
+    //     for (int j=0; j<2; j++) {
+    //         rands[j] = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+    //     }
+    //     double phi = rands[0] * M_PI;
+    //     double theta = rands[1] * M_PI * 2;
+    //     double m = 1;
+    //     Eigen::Vector3d r = { radius * std::sin(phi) * std::cos(theta),
+    //         radius * std::sin(phi) * std::sin(theta),
+    //         radius * std::cos(phi) };
+    //     Eigen::Vector3d v = {0,0,0};
+    //     Particle p = Particle(m, r, v);
+    //     universe.addParticle(p);
+    // }
+    
+    return vertices;
 }
 
 void setup()
 {
-    genData();
-    float vertices[3 * universe.numParticles];
-    universe.toVertices(vertices);
+    std::vector<glm::vec3> vertices = genData();
     
-    glPointSize(3);
+    glPointSize(10);
+    glGenVertexArrays(2, VAO);
+    glGenBuffers(2, VBO);
     
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    
-    glBindVertexArray(VAO);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STREAM_DRAW);
-    
-    unsigned int posLoc = shaderProgram.getAttribLocation("pos");
-    glVertexAttribPointer(posLoc, 3, GL_FLOAT, GL_FALSE, 3*sizeof(float), (void*)0);
-    glEnableVertexAttribArray(posLoc);
+    for (int i=0; i<2; i++) {
+        glBindVertexArray(VAO[i]);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, VBO[i]);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(glm::vec3)*vertices.size(), &vertices[0], GL_STATIC_DRAW);
+        
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6*sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6*sizeof(float), (void*)(3 * sizeof(float)));
+    }
+    glBindVertexArray(0);
 }
 
-void render(double dt)
+void render(double dt, int currBuffer)
 {
-    universe.update(dt);
-    float vertices[3 * universe.numParticles];
-    universe.toVertices(vertices);
+    // Transform Feedback
+    transformShaderProgram.use();
+    transformShaderProgram.setFloat("dt", dt);
     
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STREAM_DRAW);
-    glDrawArrays(GL_POINTS, 0, universe.numParticles);
+    glBindVertexArray(VAO[(currBuffer+1) % 2]);
+    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, VBO[currBuffer]);
+    
+    glEnable(GL_RASTERIZER_DISCARD);
+    glBeginTransformFeedback(GL_POINTS);
+    glDrawArrays(GL_POINTS, 0, numParticles);
+    glEndTransformFeedback();
+    glDisable(GL_RASTERIZER_DISCARD);
+    
+    // Render
+    glClear(GL_COLOR_BUFFER_BIT);
+    
+    shaderProgram.use();
+    glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+    glm::mat4 view = camera.GetViewMatrix();
+    glm::mat4 model = glm::mat4(1.0f);
+    shaderProgram.setMat4("mvp", projection * view * model);
+    
+    glBindVertexArray(VAO[currBuffer]);
+    glDrawArrays(GL_POINTS, 0, numParticles);
 }
 
 void run()
@@ -176,25 +204,17 @@ void run()
     if (saveToImage)
         std::system("rm img/*");
     
+    int currBuffer = 0;
     while (!glfwWindowShouldClose(window))
         {
-            std::cout << (float)renderCount/(float)maxRenderCount << "\r" << std::flush;
+            //std::cout << (float)renderCount/(float)maxRenderCount << "\r" << std::flush;
             
             double time = glfwGetTime();
             dt = time - prevTime;
             prevTime = time;
             
             processInput(window);
-            
-            glClear(GL_COLOR_BUFFER_BIT);
-            
-            shaderProgram.use();
-            glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
-            glm::mat4 view = camera.GetViewMatrix();
-            glm::mat4 model = glm::mat4(1.0f);
-            shaderProgram.setMat4("mvp", projection * view * model);
-            
-            render(dt/numParticles);
+            render(dt, currBuffer);
             
             if (saveToImage)
                 saveImage(renderCount, renderCount==maxRenderCount);
@@ -202,6 +222,8 @@ void run()
             
             glfwSwapBuffers(window);
             glfwPollEvents();
+            
+            currBuffer = (currBuffer + 1) % 2;
         }
 }
 
@@ -214,8 +236,8 @@ int main()
     setup();
     run();
     
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
+    glDeleteVertexArrays(1, VAO);
+    glDeleteBuffers(1, VBO);
     glfwTerminate();
     
     t2 = clock();

@@ -15,6 +15,7 @@ public:
     unsigned int ID;
     Shader () { }
     Shader(const char* vertexPath, const char* fragmentPath);
+    Shader(const char* transformPath, const char* varyings[], const int numVaryings);
     void use();
     unsigned int getAttribLocation(const std::string &name);
     void setBool(const std::string &name, bool value);
