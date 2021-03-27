@@ -9,4 +9,4 @@ I used OpenGL to implement a GPU-accelerated N-Body simulation. Parts of the `ca
 ![wall collision](saved/collision_walls_n16000.gif?raw=true)
 
 ## Dual Sphere Implosion: 16K Particles
-![wall collision](saved/dual_sphere_n16000.gif?raw=true)
+![dual sphere implosion](saved/dual_sphere_n16000.gif?raw=true)
