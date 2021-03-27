@@ -15,12 +15,13 @@
 #include <FreeImage.h>
 
 GLFWwindow* window;
-GLuint VAO[2], VBO[2];
+GLuint VAO, VBO, QuadVAO, QuadVBO, FBO;
+GLuint positions[2], velocities[2];
 Shader shaderProgram = Shader();
-Shader transformShaderProgram = Shader();
+Shader updateTextureProgram = Shader();
 
-const unsigned int SCR_WIDTH = 800;
-const unsigned int SCR_HEIGHT = 800;
+const unsigned int SCR_WIDTH = 1600;
+const unsigned int SCR_HEIGHT = 900;
 
 Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
 bool isFirstMouse = true;
@@ -30,12 +31,13 @@ double dt       = 0;
 double prevTime = 0;
 
 bool saveToImage = false;
-int renderCount = 1;
-int maxRenderCount = 100;
-int numParticles = 2;
-double G = 1;
+int frameCount = 1;
+int maxFrameCount = 100;
+int N = 3000;
+float G = 1;
+float timestepFactor = 100;
 
-void saveImage(int renderCount, bool saveAnimation)
+void saveImage(int frameCount, bool saveAnimation)
 {
     int img_width = SCR_WIDTH;
     int img_height = SCR_HEIGHT;
@@ -44,7 +46,7 @@ void saveImage(int renderCount, bool saveAnimation)
     FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, img_width, img_height, 3 * img_width, 24, 0x0000FF, 0xFF0000, 0x00FF00, false);
     
     char filename[13];
-    sprintf(filename, "img/%05d.bmp", renderCount);
+    sprintf(filename, "img/%05d.bmp", frameCount);
     FreeImage_Save(FIF_BMP, image, filename, 0);
     FreeImage_Unload(image);
     delete [] pixels;
@@ -54,6 +56,44 @@ void saveImage(int renderCount, bool saveAnimation)
             glfwSetWindowShouldClose(window, true);
             std::system("ffmpeg -y -f image2 -i 'img/%05d.bmp' animation.gif");
         }
+}
+
+void processInput(GLFWwindow* window)
+{
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        camera.ProcessKeyboard(FORWARD, dt);
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        camera.ProcessKeyboard(BACKWARD, dt);
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        camera.ProcessKeyboard(LEFT, dt);
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        camera.ProcessKeyboard(RIGHT, dt);
+}
+
+void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode)
+{
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+        if (saveToImage)
+            saveImage(frameCount, true);
+    }
+    if (key >= 0 && key < 1024) {
+        if (action == GLFW_PRESS) {
+            if (key == GLFW_KEY_J) {
+                G *= 1.2;
+                std::cout << "G = " << G << std::endl;
+            } else if (key == GLFW_KEY_K) {
+                G *= 0.8;
+                std::cout << "G = " << G << std::endl;
+            } else if (key == GLFW_KEY_SPACE) {
+                camera.MovementSpeed *= 1.2;
+                std::cout << "Cam Speed = " << camera.MovementSpeed << std::endl;
+            } else if (key == GLFW_KEY_LEFT_SHIFT) {
+                camera.MovementSpeed *= 0.8;
+                std::cout << "Cam Speed = " << camera.MovementSpeed << std::endl;
+            }
+        }
+    }
 }
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
@@ -78,22 +118,6 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
     camera.ProcessMouseScroll(yoffset);
 }
 
-void processInput(GLFWwindow* window)
-{
-    if (glfwGetKey(window, GLFW_KEY_BACKSPACE) == GLFW_PRESS) {
-        saveImage(renderCount, true);
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-    }
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        camera.ProcessKeyboard(FORWARD, dt);
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        camera.ProcessKeyboard(BACKWARD, dt);
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        camera.ProcessKeyboard(LEFT, dt);
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        camera.ProcessKeyboard(RIGHT, dt);
-}
-
 void init()
 {
     srand(time(NULL));
@@ -107,96 +131,182 @@ void init()
     window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "N-Body", NULL, NULL);
     glfwMakeContextCurrent(window);
     
-    // glfwSetCursorPosCallback(window, mouse_callback);
-    // glfwSetScrollCallback(window, scroll_callback);
-    // glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetKeyCallback(window, key_callback);
+    glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetScrollCallback(window, scroll_callback);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cout << "Failed to initialize GLAD" << std::endl;
         return;
     }
     
-    shaderProgram = Shader("shaders/render.vs", "shaders/render.fs");
-    const char *varyings[] = {"outPos", "outVel"};
-    transformShaderProgram = Shader("shaders/transform.vs", varyings, 2);
+    shaderProgram = Shader("shaders/draw.vs", "shaders/draw.fs");
+    updateTextureProgram = Shader("shaders/update.vs", "shaders/update.fs");
 }
 
-std::vector<glm::vec3> genData()
+void genData(float initPositions[], float initVelocities[])
 {
-    std::vector<glm::vec3> vertices(2*numParticles);
-    vertices[0] = glm::vec3(1,0,0);
-    vertices[1] = glm::vec3(-0.5,0,0);
-    vertices[2] = -vertices[0];
-    vertices[3] = -vertices[1];
+    double radius = 2.0;
+    for (int i = 0; i < N/2; i++) {
+        double rands[2];
+        for (int j = 0; j < 2; j++) {
+            rands[j] = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        }
+        double phi = rands[0] * M_PI;
+        double theta = rands[1] * M_PI * 2;
 
-    // double radius = 1.0;
-    // for (int i=0; i<numParticles; i++) {
-    //     double rands[2];
-    //     for (int j=0; j<2; j++) {
-    //         rands[j] = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-    //     }
-    //     double phi = rands[0] * M_PI;
-    //     double theta = rands[1] * M_PI * 2;
-    //     double m = 1;
-    //     Eigen::Vector3d r = { radius * std::sin(phi) * std::cos(theta),
-    //         radius * std::sin(phi) * std::sin(theta),
-    //         radius * std::cos(phi) };
-    //     Eigen::Vector3d v = {0,0,0};
-    //     Particle p = Particle(m, r, v);
-    //     universe.addParticle(p);
-    // }
-    
-    return vertices;
+        initPositions[4*i] = radius * std::sin(phi) * std::cos(theta) - radius;
+        initPositions[4*i+1] = radius * std::sin(phi) * std::sin(theta);
+        initPositions[4*i+2] = radius * std::cos(phi);
+        initPositions[4*i+3] = 1;
+
+        initVelocities[4*i] = 0;
+        initVelocities[4*i+1] = 0;
+        initVelocities[4*i+2] = 0;
+        initVelocities[4*i+3] = 1;
+    }
+    for (int i = N/2; i < N; i++) {
+        double rands[2];
+        for (int j = 0; j < 2; j++) {
+            rands[j] = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        }
+        double phi = rands[0] * M_PI;
+        double theta = rands[1] * M_PI * 2;
+
+        initPositions[4*i] = radius * std::sin(phi) * std::cos(theta) + radius;
+        initPositions[4*i+1] = radius * std::sin(phi) * std::sin(theta);
+        initPositions[4*i+2] = radius * std::cos(phi);
+        initPositions[4*i+3] = 1;
+
+        initVelocities[4*i] = 0;
+        initVelocities[4*i+1] = 0;
+        initVelocities[4*i+2] = 0;
+        initVelocities[4*i+3] = 1;
+    }
 }
 
 void setup()
 {
-    std::vector<glm::vec3> vertices = genData();
-    
-    glPointSize(10);
-    glGenVertexArrays(2, VAO);
-    glGenBuffers(2, VBO);
-    
-    for (int i=0; i<2; i++) {
-        glBindVertexArray(VAO[i]);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, VBO[i]);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(glm::vec3)*vertices.size(), &vertices[0], GL_STATIC_DRAW);
-        
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6*sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6*sizeof(float), (void*)(3 * sizeof(float)));
+    float initPositions[4*N], initVelocities[4*N];
+    genData(initPositions, initVelocities);
+    int indices[N];
+    for (int i = 0; i < N; i++) {
+        indices[i] = i;
     }
+    
+    glPointSize(3);
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+    
+    glEnableVertexAttribArray(0);
+    glVertexAttribIPointer(0, 1, GL_INT, 0, (void*)0);
     glBindVertexArray(0);
+    
+    // Quad VAO
+    const GLfloat vertices[] = { -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, -1.0f };
+    glGenVertexArrays(1, &QuadVAO);
+    glGenBuffers(1, &QuadVBO);
+    
+    glBindVertexArray(QuadVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, QuadVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    glBindVertexArray(0);
+    
+    // Textures
+    glGenTextures(2, positions);
+    glGenTextures(2, velocities);
+    for (int i = 0; i < 2; i++) {
+        glBindTexture(GL_TEXTURE_2D, positions[i]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, N, 1, 0, GL_RGBA, GL_FLOAT, nullptr);
+        
+        glBindTexture(GL_TEXTURE_2D, velocities[i]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, N, 1, 0, GL_RGBA, GL_FLOAT, nullptr);
+    }
+    glBindTexture(GL_TEXTURE_2D, positions[1]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, N, 1, 0, GL_RGBA, GL_FLOAT, initPositions);
+    glBindTexture(GL_TEXTURE_2D, velocities[1]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, N, 1, 0, GL_RGBA, GL_FLOAT, initVelocities);
+    
+    glGenFramebuffers(1, &FBO);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
+    for (int i = 0; i < 2; i++) {
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + 2*i, GL_TEXTURE_2D, positions[i], 0);
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1 + 2*i, GL_TEXTURE_2D, velocities[i], 0);
+    }
+    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cout << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    
+    shaderProgram.use();
+    shaderProgram.setInt("positions", 0);
+    
+    updateTextureProgram.use();
+    updateTextureProgram.setInt("N", N);
+    updateTextureProgram.setInt("positions", 0);
+    updateTextureProgram.setInt("velocities", 1);
 }
 
-void render(double dt, int currBuffer)
+void render(double dt, int k)
 {
-    // Transform Feedback
-    transformShaderProgram.use();
-    transformShaderProgram.setFloat("dt", dt);
+    // Update positions, velocities
+    updateTextureProgram.use();
+    updateTextureProgram.setFloat("G", G);
+    updateTextureProgram.setFloat("dt", dt / timestepFactor);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FBO);
     
-    glBindVertexArray(VAO[(currBuffer+1) % 2]);
-    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, VBO[currBuffer]);
+    GLenum DrawBuffers[2];
+    if (k == 0) {
+        DrawBuffers[0] = GL_COLOR_ATTACHMENT2;
+        DrawBuffers[1] = GL_COLOR_ATTACHMENT3;
+    } else if (k == 1) {
+        DrawBuffers[0] = GL_COLOR_ATTACHMENT0;
+        DrawBuffers[1] = GL_COLOR_ATTACHMENT1;
+    }
+    glDrawBuffers(2, DrawBuffers);
     
-    glEnable(GL_RASTERIZER_DISCARD);
-    glBeginTransformFeedback(GL_POINTS);
-    glDrawArrays(GL_POINTS, 0, numParticles);
-    glEndTransformFeedback();
-    glDisable(GL_RASTERIZER_DISCARD);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, positions[k]);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, velocities[k]);
     
-    // Render
+    glViewport(0, 0, N, 1);
+    glBindVertexArray(QuadVAO);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+    
+    // Draw
     glClear(GL_COLOR_BUFFER_BIT);
     
     shaderProgram.use();
-    glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+    glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.0f, 100.0f);
     glm::mat4 view = camera.GetViewMatrix();
     glm::mat4 model = glm::mat4(1.0f);
+    model = glm::translate(model, glm::vec3(0,0,-8));
     shaderProgram.setMat4("mvp", projection * view * model);
     
-    glBindVertexArray(VAO[currBuffer]);
-    glDrawArrays(GL_POINTS, 0, numParticles);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, positions[k]);
+    
+    glBindVertexArray(VAO);
+    glDrawArrays(GL_POINTS, 0, N);
+    glBindVertexArray(0);
 }
 
 void run()
@@ -204,26 +314,26 @@ void run()
     if (saveToImage)
         std::system("rm img/*");
     
-    int currBuffer = 0;
+    int k = 1;
     while (!glfwWindowShouldClose(window))
         {
-            //std::cout << (float)renderCount/(float)maxRenderCount << "\r" << std::flush;
+            //std::cout << (float)frameCount/(float)maxFrameCount << "\r" << std::flush;
             
             double time = glfwGetTime();
             dt = time - prevTime;
             prevTime = time;
             
             processInput(window);
-            render(dt, currBuffer);
+            render(dt, k);
             
             if (saveToImage)
-                saveImage(renderCount, renderCount==maxRenderCount);
-            renderCount++;
+                saveImage(frameCount, frameCount==maxFrameCount);
+            frameCount++;
             
             glfwSwapBuffers(window);
             glfwPollEvents();
-            
-            currBuffer = (currBuffer + 1) % 2;
+
+            k = (k + 1) % 2;
         }
 }
 
@@ -236,8 +346,11 @@ int main()
     setup();
     run();
     
-    glDeleteVertexArrays(1, VAO);
-    glDeleteBuffers(1, VBO);
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteVertexArrays(1, &QuadVAO);
+    glDeleteBuffers(1, &VBO);
+    glDeleteBuffers(1, &QuadVBO);
+    glDeleteFramebuffers(1, &FBO);
     glfwTerminate();
     
     t2 = clock();
