@@ -32,18 +32,19 @@ double prevTime = 0;
 
 bool saveToImage = false;
 int frameCount = 1;
-int maxFrameCount = 100;
-int N = 3000;
-float G = 1;
-float timestepFactor = 100;
+int maxFrameCount = 200;
+int N = 10000;
+float timestepFactor = 700;
+float pointSize = 1.1;
+float G = 0.5;
 
 void saveImage(int frameCount, bool saveAnimation)
 {
     int img_width = SCR_WIDTH;
     int img_height = SCR_HEIGHT;
     BYTE* pixels = new BYTE[3 * img_width * img_height];
-    glReadPixels(0, 0, img_width, img_height, GL_RGB, GL_UNSIGNED_BYTE, pixels);
-    FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, img_width, img_height, 3 * img_width, 24, 0x0000FF, 0xFF0000, 0x00FF00, false);
+    glReadPixels(0, 0, img_width, img_height, GL_BGR, GL_UNSIGNED_BYTE, pixels);
+    FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, img_width, img_height, 3 * img_width, 24, 0xFF0000, 0x00FF00, 0x0000FF, false);
     
     char filename[13];
     sprintf(filename, "img/%05d.bmp", frameCount);
@@ -80,7 +81,7 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action, int mod
     if (key >= 0 && key < 1024) {
         if (action == GLFW_PRESS) {
             if (key == GLFW_KEY_J) {
-                G *= 1.2;
+                G *= 5.0;
                 std::cout << "G = " << G << std::endl;
             } else if (key == GLFW_KEY_K) {
                 G *= 0.8;
@@ -147,21 +148,21 @@ void init()
 
 void genData(float initPositions[], float initVelocities[])
 {
-    double radius = 2.0;
+    double radius = 0.5, v0 = 40;
     for (int i = 0; i < N/2; i++) {
         double rands[2];
         for (int j = 0; j < 2; j++) {
             rands[j] = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
         }
-        double phi = rands[0] * M_PI;
-        double theta = rands[1] * M_PI * 2;
+        float theta = rands[0] * M_PI;
+        float phi = rands[1] * 2*M_PI;
 
-        initPositions[4*i] = radius * std::sin(phi) * std::cos(theta) - radius;
-        initPositions[4*i+1] = radius * std::sin(phi) * std::sin(theta);
-        initPositions[4*i+2] = radius * std::cos(phi);
+        initPositions[4*i] = radius * glm::sin(theta) * glm::cos(phi) - 2*radius;
+        initPositions[4*i+1] = radius * glm::sin(theta) * glm::sin(phi);
+        initPositions[4*i+2] = radius * glm::cos(theta);
         initPositions[4*i+3] = 1;
 
-        initVelocities[4*i] = 0;
+        initVelocities[4*i] = v0;
         initVelocities[4*i+1] = 0;
         initVelocities[4*i+2] = 0;
         initVelocities[4*i+3] = 1;
@@ -171,15 +172,15 @@ void genData(float initPositions[], float initVelocities[])
         for (int j = 0; j < 2; j++) {
             rands[j] = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
         }
-        double phi = rands[0] * M_PI;
-        double theta = rands[1] * M_PI * 2;
+        float theta = rands[0] * M_PI;
+        float phi = rands[1] * 2*M_PI;
 
-        initPositions[4*i] = radius * std::sin(phi) * std::cos(theta) + radius;
-        initPositions[4*i+1] = radius * std::sin(phi) * std::sin(theta);
-        initPositions[4*i+2] = radius * std::cos(phi);
+        initPositions[4*i] = radius * glm::sin(theta) * glm::cos(phi) + 2*radius;
+        initPositions[4*i+1] = radius * glm::sin(theta) * glm::sin(phi);
+        initPositions[4*i+2] = radius * glm::cos(theta);
         initPositions[4*i+3] = 1;
 
-        initVelocities[4*i] = 0;
+        initVelocities[4*i] = -v0;
         initVelocities[4*i+1] = 0;
         initVelocities[4*i+2] = 0;
         initVelocities[4*i+3] = 1;
@@ -195,7 +196,7 @@ void setup()
         indices[i] = i;
     }
     
-    glPointSize(3);
+    glPointSize(pointSize);
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
     
@@ -255,6 +256,7 @@ void setup()
     
     shaderProgram.use();
     shaderProgram.setInt("positions", 0);
+    shaderProgram.setInt("velocities", 1);
     
     updateTextureProgram.use();
     updateTextureProgram.setInt("N", N);
@@ -298,11 +300,12 @@ void render(double dt, int k)
     glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.0f, 100.0f);
     glm::mat4 view = camera.GetViewMatrix();
     glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, glm::vec3(0,0,-8));
     shaderProgram.setMat4("mvp", projection * view * model);
     
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, positions[k]);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, velocities[k]);
     
     glBindVertexArray(VAO);
     glDrawArrays(GL_POINTS, 0, N);
@@ -317,7 +320,7 @@ void run()
     int k = 1;
     while (!glfwWindowShouldClose(window))
         {
-            //std::cout << (float)frameCount/(float)maxFrameCount << "\r" << std::flush;
+            std::cout << (float)frameCount/(float)maxFrameCount << "\r" << std::flush;
             
             double time = glfwGetTime();
             dt = time - prevTime;
@@ -339,9 +342,6 @@ void run()
 
 int main()
 {
-    clock_t t1, t2;
-    t1 = clock();
-    
     init();
     setup();
     run();
@@ -352,10 +352,8 @@ int main()
     glDeleteBuffers(1, &QuadVBO);
     glDeleteFramebuffers(1, &FBO);
     glfwTerminate();
-    
-    t2 = clock();
-    float secs = ((float)t2-(float)t1)/CLOCKS_PER_SEC;
-    std::cout << "Run time: " << secs << std::endl;
+
+    std::cout << "frameCount = " << frameCount << std::endl;
     
     return 0;
 }

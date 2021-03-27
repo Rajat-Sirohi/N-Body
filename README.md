@@ -1,15 +1,12 @@
 # GPU Accelerated N-Body Simulation
 
-I used OpenGL to perform an N-Body simulation. Parts of the `camera` and `shader` utilities are based on code found [here](https://learnopengl.com). A few examples of my program are shown below:
+I used OpenGL to implement a GPU-accelerated N-Body simulation. Parts of the `camera` and `shader` utility classes are based on code found [here](https://learnopengl.com). A few examples of my program are shown below:
 
-## Cube: 1000 Particles
-![alt text](saved/cube_n1000.gif?raw=true)
+## Collision of Spheres: 16K Particles
+![sphere collision](saved/collision_spheres_n16000.gif?raw=true)
 
-## Dual Spheres: 1000 Particles
-![alt text](saved/dual_n1000.gif?raw=true)
+## Collision of Walls: 16K Particles
+![wall collision](saved/collision_walls_n16000.gif?raw=true)
 
-## Sphere: 1000 Particles
-![alt text](saved/sphere_n1000.gif?raw=true)
-
-## Sphere: 5000 Particles
-![alt text](saved/sphere_n5000.gif?raw=true)
+## Dual Sphere Implosion: 16K Particles
+![wall collision](saved/dual_sphere_n16000.gif?raw=true)
